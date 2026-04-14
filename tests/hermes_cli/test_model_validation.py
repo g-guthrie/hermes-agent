@@ -179,10 +179,10 @@ class TestProviderLabel:
 class TestProviderModelIds:
     def test_openrouter_returns_curated_list(self):
         with patch(
-            "hermes_cli.models.fetch_openrouter_models",
+            "hermes_cli.models.openrouter_picker_model_ids",
             return_value=[
-                ("anthropic/claude-opus-4.6", "recommended"),
-                ("qwen/qwen3.6-plus", ""),
+                "anthropic/claude-opus-4.6",
+                "qwen/qwen3.6-plus",
             ],
         ):
             ids = provider_model_ids("openrouter")

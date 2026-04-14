@@ -46,6 +46,22 @@ def _make_event(platform: Platform, text: str = "/model"):
     )
 
 
+def _fake_selection_tree():
+    return SimpleNamespace(
+        sources=(SimpleNamespace(id="openrouter", label="OpenRouter"),),
+        providers=lambda source_id: (
+            [SimpleNamespace(id="openrouter:anthropic", provider_slug="openrouter", current=False)]
+            if source_id == "openrouter"
+            else []
+        ),
+        models=lambda provider_id: (
+            [SimpleNamespace(model_id="anthropic/claude-sonnet-4.6", enabled=True)]
+            if provider_id == "openrouter:anthropic"
+            else []
+        ),
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("platform", [Platform.TELEGRAM, Platform.DISCORD])
 async def test_handle_model_command_uses_platform_native_picker(tmp_path, monkeypatch, platform):
@@ -62,16 +78,8 @@ async def test_handle_model_command_uses_platform_native_picker(tmp_path, monkey
 
     monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
     monkeypatch.setattr(
-        "hermes_cli.model_switch.list_authenticated_providers",
-        lambda **_kwargs: [
-            {
-                "slug": "openrouter",
-                "name": "OpenRouter",
-                "models": ["anthropic/claude-sonnet-4.6"],
-                "total_models": 1,
-                "is_current": False,
-            }
-        ],
+        "hermes_cli.model_selection.build_model_selection_tree",
+        lambda **_kwargs: _fake_selection_tree(),
     )
 
     runner = _make_runner(platform)
@@ -81,7 +89,7 @@ async def test_handle_model_command_uses_platform_native_picker(tmp_path, monkey
 
     assert result is None
     adapter._send_model_picker.assert_awaited_once()
-    assert adapter.calls[0]["providers"][0]["slug"] == "openrouter"
+    assert adapter.calls[0]["selection_tree"].sources[0].id == "openrouter"
     assert adapter.calls[0]["current_model"] == "gpt-5.4"
     assert adapter.calls[0]["current_provider"] == "openai-codex"
 
@@ -101,16 +109,8 @@ async def test_model_picker_callback_uses_shared_switch_pipeline(tmp_path, monke
 
     monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
     monkeypatch.setattr(
-        "hermes_cli.model_switch.list_authenticated_providers",
-        lambda **_kwargs: [
-            {
-                "slug": "openrouter",
-                "name": "OpenRouter",
-                "models": ["anthropic/claude-sonnet-4.6"],
-                "total_models": 1,
-                "is_current": False,
-            }
-        ],
+        "hermes_cli.model_selection.build_model_selection_tree",
+        lambda **_kwargs: _fake_selection_tree(),
     )
 
     captured = {}

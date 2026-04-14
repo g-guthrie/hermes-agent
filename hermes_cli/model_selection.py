@@ -28,7 +28,12 @@ from hermes_cli.auth import (
 )
 from hermes_cli.codex_models import DEFAULT_CODEX_MODELS, get_codex_model_ids
 from hermes_cli.model_normalize import normalize_model_for_provider
-from hermes_cli.models import OPENROUTER_MODELS, _PROVIDER_MODELS, normalize_provider
+from hermes_cli.models import (
+    _PROVIDER_MODELS,
+    normalize_provider,
+    openrouter_picker_groups,
+    openrouter_vendor_label,
+)
 from hermes_cli.providers import custom_provider_slug, get_label
 
 StatusKind = Literal["none", "success", "error"]
@@ -62,24 +67,6 @@ _LOCAL_ALIAS_PROVIDER_ORDER: tuple[str, ...] = (
     "ollama-cloud",
     "local",
 )
-
-_OPENROUTER_VENDOR_LABELS: dict[str, str] = {
-    "anthropic": "Anthropic",
-    "arcee-ai": "Arcee",
-    "deepseek": "DeepSeek",
-    "google": "Google",
-    "meta-llama": "Meta Llama",
-    "minimax": "MiniMax",
-    "moonshotai": "Moonshot",
-    "nvidia": "Nvidia",
-    "openai": "OpenAI",
-    "qwen": "Qwen",
-    "stepfun": "StepFun",
-    "x-ai": "X.AI",
-    "xiaomi": "Xiaomi",
-    "z-ai": "Z.AI",
-}
-
 
 @dataclass(frozen=True)
 class SourceCategory:
@@ -173,6 +160,17 @@ class ModelSelectionTree:
 
     def models(self, provider_id: str) -> tuple[ModelNode, ...]:
         return self.models_by_provider.get(provider_id, ())
+
+
+def provider_picker_label(tree: ModelSelectionTree, provider_id: str) -> str:
+    """Return a transport-neutral provider label for interactive pickers."""
+    provider = tree.provider(provider_id)
+    if provider is None:
+        return ""
+    source = tree.source(provider.source_id)
+    if source is not None and source.id != "other":
+        return f"{source.label} / {provider.label}"
+    return provider.label
 
 
 class ModelSelectionController:
@@ -366,11 +364,7 @@ def _openrouter_has_credentials() -> bool:
 
 
 def _vendor_label(vendor_slug: str) -> str:
-    label = _OPENROUTER_VENDOR_LABELS.get(vendor_slug)
-    if label:
-        return label
-    bits = [part for part in vendor_slug.replace("_", "-").split("-") if part]
-    return " ".join(part[:1].upper() + part[1:] for part in bits) or vendor_slug
+    return openrouter_vendor_label(vendor_slug)
 
 
 def _append_variant(label: str, variant: str) -> str:
@@ -581,20 +575,9 @@ def build_model_selection_tree(
     )
 
     current_openrouter_model = normalize_model_for_provider(current_model, "openrouter")
-    grouped: dict[str, list[str]] = {}
-    ordered_vendors: list[str] = []
-    for model_id, _desc in OPENROUTER_MODELS:
-        if "/" not in model_id:
-            continue
-        vendor, _bare = model_id.split("/", 1)
-        if vendor not in grouped:
-            grouped[vendor] = []
-            ordered_vendors.append(vendor)
-        grouped[vendor].append(model_id)
-
     openrouter_providers: list[ProviderNode] = []
     models_by_provider: dict[str, tuple[ModelNode, ...]] = {}
-    for vendor in ordered_vendors:
+    for vendor, vendor_models in openrouter_picker_groups():
         provider_id = f"openrouter:{vendor}"
         openrouter_providers.append(
             ProviderNode(
@@ -623,7 +606,7 @@ def build_model_selection_tree(
                     and current_openrouter_model == model_id
                 ),
             )
-            for model_id in grouped[vendor]
+            for model_id in vendor_models
         )
 
     oauth_providers: list[ProviderNode] = []

@@ -4037,6 +4037,7 @@ class GatewayRunner:
             switch_model as _switch_model, parse_model_flags,
             list_authenticated_providers,
         )
+        from hermes_cli.model_selection import build_model_selection_tree
         from hermes_cli.config import load_runtime_config
         from hermes_cli.providers import get_label
 
@@ -4080,16 +4081,23 @@ class GatewayRunner:
 
             if has_picker:
                 try:
-                    providers = list_authenticated_providers(
+                    selection_tree = build_model_selection_tree(
                         current_provider=current_provider,
+                        current_model=current_model,
                         user_providers=user_provs,
                         custom_providers=custom_provs,
-                        max_models=50,
                     )
                 except Exception:
-                    providers = []
+                    selection_tree = None
 
-                if providers:
+                has_picker_entries = bool(
+                    selection_tree and any(
+                        selection_tree.providers(source.id)
+                        for source in selection_tree.sources
+                    )
+                )
+
+                if has_picker_entries:
                     # Build a callback closure for when the user picks a model.
                     # Captures self + locals needed for the switch logic.
                     _self = self
@@ -4172,7 +4180,7 @@ class GatewayRunner:
                     metadata = {"thread_id": source.thread_id} if source.thread_id else None
                     result = await adapter.send_model_picker(
                         chat_id=source.chat_id,
-                        providers=providers,
+                        selection_tree=selection_tree,
                         current_model=current_model,
                         current_provider=current_provider,
                         session_key=session_key,

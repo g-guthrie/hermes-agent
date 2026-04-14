@@ -20,10 +20,9 @@ def test_build_tree_groups_openrouter_and_oauth(monkeypatch):
     monkeypatch.setattr(ms, "get_qwen_auth_status", lambda: {"logged_in": False})
     monkeypatch.setattr(ms, "get_auth_status", lambda provider_id=None: {"logged_in": provider_id == "minimax"})
     monkeypatch.setattr(ms, "get_codex_model_ids", lambda access_token=None: ["gpt-5.4", "gpt-5.4-mini"])
-    monkeypatch.setattr(ms, "OPENROUTER_MODELS", [
-        ("openai/gpt-5.4", ""),
-        ("openai/gpt-5.4-mini", ""),
-        ("anthropic/claude-opus-4.6", ""),
+    monkeypatch.setattr(ms, "openrouter_picker_groups", lambda force_refresh=False: [
+        ("openai", ("openai/gpt-5.4", "openai/gpt-5.4-mini")),
+        ("anthropic", ("anthropic/claude-opus-4.6",)),
     ])
 
     tree = ms.build_model_selection_tree(current_provider="openrouter", current_model="openai/gpt-5.4")
@@ -44,9 +43,9 @@ def test_controller_navigates_source_provider_model(monkeypatch):
     monkeypatch.setattr(ms, "get_qwen_auth_status", lambda: {"logged_in": False})
     monkeypatch.setattr(ms, "get_auth_status", lambda provider_id=None: {"logged_in": provider_id == "minimax"})
     monkeypatch.setattr(ms, "get_codex_model_ids", lambda access_token=None: ["gpt-5.4", "gpt-5.4-mini"])
-    monkeypatch.setattr(ms, "OPENROUTER_MODELS", [
-        ("openai/gpt-5.4", ""),
-        ("anthropic/claude-opus-4.6", ""),
+    monkeypatch.setattr(ms, "openrouter_picker_groups", lambda force_refresh=False: [
+        ("openai", ("openai/gpt-5.4",)),
+        ("anthropic", ("anthropic/claude-opus-4.6",)),
     ])
 
     controller = ms.ModelSelectionController(
@@ -84,7 +83,9 @@ def test_controller_back_pops_levels(monkeypatch):
     monkeypatch.setattr(ms, "get_qwen_auth_status", lambda: {"logged_in": False})
     monkeypatch.setattr(ms, "get_auth_status", lambda provider_id=None: {"logged_in": provider_id == "minimax"})
     monkeypatch.setattr(ms, "get_codex_model_ids", lambda access_token=None: ["gpt-5.4"])
-    monkeypatch.setattr(ms, "OPENROUTER_MODELS", [("openai/gpt-5.4", "")])
+    monkeypatch.setattr(ms, "openrouter_picker_groups", lambda force_refresh=False: [
+        ("openai", ("openai/gpt-5.4",)),
+    ])
 
     controller = ms.ModelSelectionController(ms.build_model_selection_tree())
     controller.enter()
@@ -130,7 +131,7 @@ def test_other_source_marks_current_provider_when_runtime_provider_is_canonical(
         lambda provider_id=None: {"logged_in": provider_id == "copilot"},
     )
     monkeypatch.setattr(ms, "get_codex_model_ids", lambda access_token=None: [])
-    monkeypatch.setattr(ms, "OPENROUTER_MODELS", [])
+    monkeypatch.setattr(ms, "openrouter_picker_groups", lambda force_refresh=False: [])
     monkeypatch.setattr(ms, "_PROVIDER_MODELS", {"copilot": ["claude-sonnet-4.6"]})
 
     tree = ms.build_model_selection_tree(
@@ -155,7 +156,7 @@ def test_user_provider_uses_model_field_when_default_model_missing(monkeypatch):
     monkeypatch.setattr(ms, "get_qwen_auth_status", lambda: {"logged_in": False})
     monkeypatch.setattr(ms, "get_auth_status", lambda provider_id=None: {"logged_in": False})
     monkeypatch.setattr(ms, "get_codex_model_ids", lambda access_token=None: [])
-    monkeypatch.setattr(ms, "OPENROUTER_MODELS", [])
+    monkeypatch.setattr(ms, "openrouter_picker_groups", lambda force_refresh=False: [])
 
     tree = ms.build_model_selection_tree(
         current_provider="openrouter",

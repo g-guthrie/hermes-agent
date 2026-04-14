@@ -2135,7 +2135,7 @@ class DiscordAdapter(BasePlatformAdapter):
     async def send_model_picker(
         self,
         chat_id: str,
-        providers: list,
+        selection_tree,
         current_model: str,
         current_provider: str,
         session_key: str,
@@ -2177,7 +2177,7 @@ class DiscordAdapter(BasePlatformAdapter):
             )
 
             view = ModelPickerView(
-                providers=providers,
+                selection_tree=selection_tree,
                 current_model=current_model,
                 current_provider=current_provider,
                 session_key=session_key,
@@ -2812,7 +2812,7 @@ if DISCORD_AVAILABLE:
 
         def __init__(
             self,
-            providers: list,
+            selection_tree,
             current_model: str,
             current_provider: str,
             session_key: str,
@@ -2820,7 +2820,7 @@ if DISCORD_AVAILABLE:
             allowed_user_ids: set,
         ):
             super().__init__(timeout=120)
-            self.providers = providers
+            self.selection_tree = selection_tree
             self.current_model = current_model
             self.current_provider = current_provider
             self.session_key = session_key
@@ -2828,6 +2828,7 @@ if DISCORD_AVAILABLE:
             self.allowed_user_ids = allowed_user_ids
             self.resolved = False
             self._selected_provider: str = ""
+            self._provider_rows = self._build_provider_rows()
 
             self._build_provider_select()
 
@@ -2840,14 +2841,14 @@ if DISCORD_AVAILABLE:
             """Build the provider dropdown menu."""
             self.clear_items()
             options = []
-            for p in self.providers:
+            for idx, p in enumerate(self._provider_rows):
                 count = p.get("total_models", len(p.get("models", [])))
                 label = f"{p['name']} ({count} models)"
                 desc = "current" if p.get("is_current") else None
                 options.append(
                     discord.SelectOption(
                         label=label[:100],
-                        value=p["slug"],
+                        value=str(idx),
                         description=desc,
                     )
                 )
@@ -2871,9 +2872,7 @@ if DISCORD_AVAILABLE:
         def _build_model_select(self, provider_slug: str):
             """Build the model dropdown for a specific provider."""
             self.clear_items()
-            provider = next(
-                (p for p in self.providers if p["slug"] == provider_slug), None
-            )
+            provider = next((p for p in self._provider_rows if p["id"] == provider_slug), None)
             if not provider:
                 return
 
@@ -2917,14 +2916,25 @@ if DISCORD_AVAILABLE:
                 )
                 return
 
-            provider_slug = interaction.data["values"][0]
-            self._selected_provider = provider_slug
-            provider = next(
-                (p for p in self.providers if p["slug"] == provider_slug), None
-            )
-            pname = provider.get("name", provider_slug) if provider else provider_slug
+            try:
+                provider_idx = int(interaction.data["values"][0])
+            except ValueError:
+                await interaction.response.send_message(
+                    "Provider not found~", ephemeral=True
+                )
+                return
 
-            self._build_model_select(provider_slug)
+            if provider_idx < 0 or provider_idx >= len(self._provider_rows):
+                await interaction.response.send_message(
+                    "Provider not found~", ephemeral=True
+                )
+                return
+
+            provider = self._provider_rows[provider_idx]
+            self._selected_provider = provider["id"]
+            pname = provider.get("name", self._selected_provider)
+
+            self._build_model_select(self._selected_provider)
 
             total = provider.get("total_models", 0) if provider else 0
             shown = min(len(provider.get("models", [])), 25) if provider else 0
@@ -2958,7 +2968,10 @@ if DISCORD_AVAILABLE:
                 result_text = await self.on_model_selected(
                     str(interaction.channel_id),
                     model_id,
-                    self._selected_provider,
+                    next(
+                        (p["slug"] for p in self._provider_rows if p["id"] == self._selected_provider),
+                        self._selected_provider,
+                    ),
                 )
             except Exception as exc:
                 result_text = f"Error switching model: {exc}"
@@ -3012,6 +3025,27 @@ if DISCORD_AVAILABLE:
                 ),
                 view=self,
             )
+
+        def _build_provider_rows(self) -> list[dict]:
+            from hermes_cli.model_selection import provider_picker_label
+
+            rows: list[dict] = []
+            for source in self.selection_tree.sources:
+                for provider in self.selection_tree.providers(source.id):
+                    models = [
+                        model.model_id
+                        for model in self.selection_tree.models(provider.id)
+                        if model.enabled
+                    ]
+                    rows.append({
+                        "id": provider.id,
+                        "slug": provider.provider_slug,
+                        "name": provider_picker_label(self.selection_tree, provider.id),
+                        "is_current": provider.current,
+                        "models": models,
+                        "total_models": len(models),
+                    })
+            return rows
 
         async def on_timeout(self):
             self.resolved = True

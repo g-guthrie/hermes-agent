@@ -1140,7 +1140,7 @@ class TelegramAdapter(BasePlatformAdapter):
     async def send_model_picker(
         self,
         chat_id: str,
-        providers: list,
+        selection_tree,
         current_model: str,
         current_provider: str,
         session_key: str,
@@ -1156,33 +1156,40 @@ class TelegramAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         try:
-            from hermes_cli.providers import get_label
-        except ImportError:
-            def get_label(slug):
-                return slug
+            from hermes_cli.model_selection import provider_picker_label
+            provider_rows = []
+            for source in selection_tree.sources:
+                for provider in selection_tree.providers(source.id):
+                    models = [model.model_id for model in selection_tree.models(provider.id) if model.enabled]
+                    provider_rows.append({
+                        "id": provider.id,
+                        "slug": provider.provider_slug,
+                        "name": provider_picker_label(selection_tree, provider.id),
+                        "models": models,
+                        "total_models": len(models),
+                        "is_current": provider.current,
+                    })
 
-        try:
             # Build provider buttons — 2 per row
             buttons: list = []
-            for p in providers:
+            for idx, p in enumerate(provider_rows):
                 count = p.get("total_models", len(p.get("models", [])))
                 label = f"{p['name']} ({count})"
                 if p.get("is_current"):
                     label = f"✓ {label}"
-                # Compact callback data: mp:<slug>  (max 64 bytes)
+                # Compact callback data: mp:<index>  (max 64 bytes)
                 buttons.append(
-                    InlineKeyboardButton(label, callback_data=f"mp:{p['slug']}")
+                    InlineKeyboardButton(label, callback_data=f"mp:{idx}")
                 )
 
             rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
             rows.append([InlineKeyboardButton("✗ Cancel", callback_data="mx")])
             keyboard = InlineKeyboardMarkup(rows)
 
-            provider_label = get_label(current_provider)
             text = (
                 f"⚙ *Model Configuration*\n\n"
                 f"Current model: `{current_model or 'unknown'}`\n"
-                f"Provider: {provider_label}\n\n"
+                f"Provider: {current_provider}\n\n"
                 f"Select a provider:"
             )
 
@@ -1198,7 +1205,7 @@ class TelegramAdapter(BasePlatformAdapter):
             # Store picker state keyed by chat_id
             self._model_picker_state[str(chat_id)] = {
                 "msg_id": msg.message_id,
-                "providers": providers,
+                "provider_rows": provider_rows,
                 "session_key": session_key,
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
@@ -1262,32 +1269,30 @@ class TelegramAdapter(BasePlatformAdapter):
             await query.answer(text="Picker expired — use /model again.")
             return
 
-        try:
-            from hermes_cli.providers import get_label
-        except ImportError:
-            def get_label(slug):
-                return slug
-
         if data.startswith("mp:"):
             # --- Provider selected: show model buttons (page 0) ---
-            provider_slug = data[3:]
-            provider = next(
-                (p for p in state["providers"] if p["slug"] == provider_slug),
-                None,
-            )
-            if not provider:
+            try:
+                provider_idx = int(data[3:])
+            except ValueError:
                 await query.answer(text="Provider not found.")
                 return
 
+            provider_rows = state.get("provider_rows", [])
+            if provider_idx < 0 or provider_idx >= len(provider_rows):
+                await query.answer(text="Provider not found.")
+                return
+            provider = provider_rows[provider_idx]
+
             models = provider.get("models", [])
-            state["selected_provider"] = provider_slug
-            state["selected_provider_name"] = provider.get("name", provider_slug)
+            state["selected_provider"] = provider.get("slug", "")
+            state["selected_provider_idx"] = provider_idx
+            state["selected_provider_name"] = provider.get("name", "")
             state["model_list"] = models
             state["model_page"] = 0
 
             keyboard, page_info = self._build_model_keyboard(models, 0)
 
-            pname = provider.get("name", provider_slug)
+            pname = provider.get("name", "")
             total = provider.get("total_models", len(models))
             shown = len(models)
             extra = f"\n_{total - shown} more available — type `/model <name>` directly_" if total > shown else ""
@@ -1317,11 +1322,9 @@ class TelegramAdapter(BasePlatformAdapter):
             keyboard, page_info = self._build_model_keyboard(models, page)
 
             pname = state.get("selected_provider_name", "")
-            provider_slug = state.get("selected_provider", "")
-            provider = next(
-                (p for p in state["providers"] if p["slug"] == provider_slug),
-                None,
-            )
+            provider_idx = state.get("selected_provider_idx", -1)
+            provider_rows = state.get("provider_rows", [])
+            provider = provider_rows[provider_idx] if 0 <= provider_idx < len(provider_rows) else None
             total = provider.get("total_models", len(models)) if provider else len(models)
             shown = len(models)
             extra = f"\n_{total - shown} more available — type `/model <name>` directly_" if total > shown else ""
@@ -1389,29 +1392,24 @@ class TelegramAdapter(BasePlatformAdapter):
         elif data == "mb":
             # --- Back to provider list ---
             buttons = []
-            for p in state["providers"]:
+            for idx, p in enumerate(state["provider_rows"]):
                 count = p.get("total_models", len(p.get("models", [])))
                 label = f"{p['name']} ({count})"
                 if p.get("is_current"):
                     label = f"✓ {label}"
                 buttons.append(
-                    InlineKeyboardButton(label, callback_data=f"mp:{p['slug']}")
+                    InlineKeyboardButton(label, callback_data=f"mp:{idx}")
                 )
 
             rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
             rows.append([InlineKeyboardButton("✗ Cancel", callback_data="mx")])
             keyboard = InlineKeyboardMarkup(rows)
 
-            try:
-                provider_label = get_label(state["current_provider"])
-            except Exception:
-                provider_label = state["current_provider"]
-
             await query.edit_message_text(
                 text=(
                     f"⚙ *Model Configuration*\n\n"
                     f"Current model: `{state['current_model'] or 'unknown'}`\n"
-                    f"Provider: {provider_label}\n\n"
+                    f"Provider: {state['current_provider']}\n\n"
                     f"Select a provider:"
                 ),
                 parse_mode=ParseMode.MARKDOWN,

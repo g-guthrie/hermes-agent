@@ -69,6 +69,54 @@ class TestSaveModelChoiceAlwaysDict:
 
 
 class TestProviderPersistsAfterModelSave:
+    def test_openrouter_flow_uses_canonical_picker_catalog(self, config_home, monkeypatch):
+        """The dedicated OpenRouter flow should use the canonical nested picker:
+        vendor first, then models for that vendor only."""
+        from hermes_cli.main import _model_flow_openrouter
+        from hermes_cli.config import load_config
+
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-test-key")
+
+        with patch(
+            "hermes_cli.models.openrouter_picker_groups",
+            return_value=[
+                ("anthropic", ("anthropic/claude-opus-4.6",)),
+                ("google", ("google/gemma-4-31b-it", "google/gemini-3.1-pro-preview")),
+            ],
+        ), patch(
+            "hermes_cli.model_selection._vendor_label",
+            side_effect=lambda vendor: {"anthropic": "Anthropic", "google": "Google"}[vendor],
+        ), patch(
+            "hermes_cli.main._prompt_provider_choice",
+            return_value=1,
+        ), patch(
+            "hermes_cli.models.provider_model_ids",
+            side_effect=AssertionError("flat fallback should not be used when vendor models are available"),
+        ), patch(
+            "hermes_cli.models.get_pricing_for_provider",
+            return_value={},
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection",
+            return_value="google/gemma-4-31b-it",
+        ) as prompt, patch(
+            "hermes_cli.auth.deactivate_provider",
+        ):
+            _model_flow_openrouter(load_config(), "old-model")
+
+        prompt.assert_called_once_with(
+            ["google/gemma-4-31b-it", "google/gemini-3.1-pro-preview"],
+            current_model="old-model",
+            pricing={},
+        )
+
+        import yaml
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model")
+        assert isinstance(model, dict)
+        assert model.get("provider") == "openrouter"
+        assert model.get("default") == "google/gemma-4-31b-it"
+
     def test_api_key_provider_saved_when_model_was_string(self, config_home, monkeypatch):
         """_model_flow_api_key_provider must persist the provider even when
         config.model started as a plain string."""

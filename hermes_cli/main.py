@@ -1212,7 +1212,7 @@ def _prompt_provider_choice(choices, *, default=0):
 
 
 def _model_flow_openrouter(config, current_model=""):
-    """OpenRouter provider: ensure API key, then pick model."""
+    """OpenRouter provider: ensure API key, then pick vendor + model."""
     from hermes_cli.auth import _prompt_model_selection, _save_model_choice, deactivate_provider
     from hermes_cli.config import get_env_value, save_env_value
 
@@ -1234,8 +1234,46 @@ def _model_flow_openrouter(config, current_model=""):
         print("API key saved.")
         print()
 
-    from hermes_cli.models import model_ids, get_pricing_for_provider
-    openrouter_models = model_ids(force_refresh=True)
+    from hermes_cli.model_selection import _vendor_label
+    from hermes_cli.models import get_pricing_for_provider, openrouter_picker_groups, provider_model_ids
+
+    current_vendor = ""
+    if current_model and "/" in current_model:
+        current_vendor = current_model.split("/", 1)[0]
+
+    provider_groups = list(openrouter_picker_groups(force_refresh=True))
+    provider_nodes = [
+        (vendor, _vendor_label(vendor), model_ids)
+        for vendor, model_ids in provider_groups
+    ]
+    provider_nodes.sort(key=lambda node: (node[0] != current_vendor, node[1]))
+
+    default_provider_idx = 0
+    for idx, node in enumerate(provider_nodes):
+        if node[0] == current_vendor:
+            default_provider_idx = idx
+            break
+
+    openrouter_models: list[str] = []
+    if provider_nodes:
+        provider_choices = [label for _vendor, label, _model_ids in provider_nodes]
+        provider_choices.append("Cancel")
+        provider_idx = _prompt_provider_choice(
+            provider_choices,
+            default=default_provider_idx,
+        )
+        if provider_idx is None or provider_idx >= len(provider_nodes):
+            print("No change.")
+            return
+
+        _selected_vendor, _selected_label, selected_models = provider_nodes[provider_idx]
+        openrouter_models = list(selected_models)
+
+    if not openrouter_models:
+        openrouter_models = provider_model_ids("openrouter", force_refresh=True)
+        if not openrouter_models:
+            print("No OpenRouter models available.")
+            return
 
     # Fetch live pricing (non-blocking — returns empty dict on failure)
     pricing = get_pricing_for_provider("openrouter", force_refresh=True)
